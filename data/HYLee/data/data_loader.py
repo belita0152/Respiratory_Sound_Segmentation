@@ -13,19 +13,25 @@ from torch.utils.data import Dataset
 from parser import LabelParser
 
 
-def preprocessing(signal: np.ndarray, sr: int) -> np.ndarray:
+def preprocessing(signal: np.ndarray, sr: int, target_sr: int) -> Tuple[np.ndarray, int]:
+    # 1. Downsampling
+    signal = librosa.resample(signal, orig_sr=sr, target_sr=target_sr)
+
     low_cut = 50
     high_cut = 2000
     order = 4
-    nyquist = 0.5 * sr
+    nyquist = 0.5 * target_sr
     low = low_cut / nyquist
     high = high_cut / nyquist
+
+    # 2. Bandpass filter
     b, a = butter(order, [low, high], btype='band')
 
-    filtered = filtfilt(b, a, signal)
-    rectified = np.abs(filtered)
+    # 3. Rectification (absolute values)
+    filtered = filtfilt(b, a, signal)  # zero-phase filtering to avoid the phase shift issue
+    rectified = np.abs(filtered)  # transform to absolute values
 
-    return rectified.astype(np.float32)
+    return rectified, target_sr
 
 
 def sliding_window_1d(
@@ -69,6 +75,8 @@ class SlidingWindowDataset(Dataset):
         self.window_sec = window_sec
         self.step_sec = step_sec
         self.down_sampling = down_sampling
+
+        self.target_sr = target_sr
         self.sheet_name = sheet_name
         self.start_col = start_col
         self.end_col = end_col
@@ -93,12 +101,17 @@ class SlidingWindowDataset(Dataset):
         target_items = self.items[:split] if train else self.items[split:]
         self.data_arr, self.mask_arr = self._load_and_window_all(target_items)
 
-    def _load_one(self, data_path: str | Path, label_path: str | Path) -> Tuple[np.ndarray, np.ndarray, int]:
-        data_, sr = librosa.load(data_path, sr=self.target_sr)
-        data = preprocessing(data_, int(sr))
+    def _load_one(self, data_path, label_path):
+        data_, sr = librosa.load(data_path, sr=None)
+        data, down_sr = preprocessing(data_, int(sr), self.target_sr)
 
-        label = self.parser.make_label_array(data_path, label_path)
-        return data, label, int(sr)
+        label = self.parser.make_label_array(
+            label_path=label_path,
+            sr=down_sr,
+            n_samples=len(data),
+        )
+
+        return data, label, int(down_sr)
 
     def _window_one(self, sig_1d: np.ndarray, label_1d: np.ndarray, sr: int,
     ) -> Tuple[np.ndarray, np.ndarray]:
