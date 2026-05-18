@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import wave
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -46,16 +46,33 @@ class LabelParser:
 
     def build_wav_index(self) -> Dict[str, Path]:
         wav_files = sorted(self.wav_base_path.rglob("*.wav"))
+        wav_groups: Dict[str, List[Path]] = {}
         wav_ids: Dict[str, Path] = {}
 
         for path in wav_files:
             sample_id = self.extract_match_key(path)
-            if sample_id in wav_ids:
-                raise ValueError(
-                    f"Duplicate wav files for id '{sample_id}': "
-                    f"{wav_ids[sample_id]} and {path}"
-                )
-            wav_ids[sample_id] = path
+            wav_groups.setdefault(sample_id, []).append(path)
+
+        for sample_id, paths in wav_groups.items():
+            if len(paths) == 1:
+                wav_ids[sample_id] = paths[0]
+                continue
+
+            valid_paths = [
+                path for path in paths
+                if path.parent.name == sample_id.split("_")[0]
+            ]
+
+            if len(valid_paths) == 1:
+                wav_ids[sample_id] = valid_paths[0]
+                skipped_paths = [path for path in paths if path != valid_paths[0]]
+                print(f"[DUPLICATE wav] use: {valid_paths[0]}")
+                for path in skipped_paths:
+                    print(f"[DUPLICATE wav] pass: {path}")
+            else:
+                print(f"[DUPLICATE wav] pass all id: {sample_id}")
+                for path in paths:
+                    print(f"  wav: {path}")
 
         return wav_ids
 
@@ -131,14 +148,10 @@ class LabelParser:
 
         return self.background_label
 
-    def make_label_array(
-        self,
-        wav_path: str | Path,
-        label_path: str | Path,
-    ) -> np.ndarray:
-        sr, n_samples = self.get_wav_info(wav_path)
+    def make_label_array(self, label_path: str | Path, sr: int, n_samples: int,
+        ) -> np.ndarray:
 
-        mask = np.full(n_samples, self.background_label, dtype=np.int64)  # fill an array with background_label
+        mask = np.full(n_samples, self.background_label, dtype=np.int64)
         label_df = pd.read_excel(label_path, sheet_name=self.sheet_name)
 
         for _, row in label_df.iterrows():
@@ -146,6 +159,7 @@ class LabelParser:
                 continue
 
             label_id = self.parse_label_value(row[self.label_col])
+
             start_idx = max(0, int(round(float(row[self.start_col]) * sr)))
             end_idx = min(n_samples, int(round(float(row[self.end_col]) * sr)))
 
@@ -175,7 +189,7 @@ if __name__ == "__main__":
 
     for sample_id, (wav_path, label_path) in matched.items():
         sample_rate, num_samples = parser.get_wav_info(wav_path)
-        label_arr = parser.make_label_array(wav_path, label_path)
+        label_arr = parser.make_label_array(label_path, sample_rate, num_samples)
         values, counts = np.unique(label_arr, return_counts=True)
         label_counts = {
             int(value): int(count)
