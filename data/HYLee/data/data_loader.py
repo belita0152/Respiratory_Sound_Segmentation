@@ -168,12 +168,48 @@ class SlidingWindowDataset(Dataset):
         return signal, mask
 
 
+
+# -----------------------------------------------------------------------------
+# Concrete Datasets
+# -----------------------------------------------------------------------------
+
+class LungSoundDataset(SlidingWindowDataset):
+    """SNUCH Child Lung Sound Dataset"""
+
+    def __init__(
+        self,
+        wav_base_path: str,
+        label_base_path: str,
+        *,
+        down_sampling: bool = True,
+        train: bool = True,
+        train_ratio: float = 0.8,
+        target_sr: int = 16000,
+        window_sec: float = 8.0,
+        step_sec: float = 4.0,
+    ):
+        super().__init__(
+            wav_base_path,
+            label_base_path,
+            down_sampling=down_sampling,
+            train=train,
+            train_ratio=train_ratio,
+            target_sr=target_sr,
+            window_sec=window_sec,
+            step_sec=step_sec,
+            sheet_name=1,
+            start_col="cycle_start_time",
+            end_col="cycle_end_time",
+            label_col="labels",
+        )
+
+
 if __name__ == "__main__":
     root = os.path.join(os.getcwd(), "..", "..")
     label_folder = os.path.join(root, "raw", "label_250520")
     data_folder = os.path.join(root, "raw", "241205")
 
-    train_dataset = SlidingWindowDataset(
+    train_dataset = LungSoundDataset(
         data_folder,
         label_folder,
         train=True,
