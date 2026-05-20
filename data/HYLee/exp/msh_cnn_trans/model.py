@@ -1,4 +1,5 @@
 """
+Reference: https://arxiv.org/abs/2507.20408
 
 1. Dataset Preprocessing
 2. Signal Transformation to 2D Image (wavelet -> scalogram)
