@@ -8,6 +8,8 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from utils import matched_ids as cohort_matched_ids
+
 
 class LabelParser:
     def __init__(
@@ -36,6 +38,7 @@ class LabelParser:
             "Crackle": 4,
         }
         self.background_label = background_label
+        self.matched_ids = sorted(str(sample_id) for sample_id in cohort_matched_ids)
 
     @staticmethod
     def extract_match_key(path: str | Path) -> str:
@@ -93,7 +96,10 @@ class LabelParser:
     def match_files(self) -> Dict[str, Tuple[Path, Path]]:
         wav_ids = self.build_wav_index()
         label_ids = self.build_label_index()
-        matched_ids = sorted(set(wav_ids.keys()) & set(label_ids.keys()))
+        matched_ids = [
+            sample_id for sample_id in self.matched_ids
+            if sample_id in wav_ids and sample_id in label_ids
+        ]
 
         return {
             sample_id: (wav_ids[sample_id], label_ids[sample_id])
@@ -103,7 +109,13 @@ class LabelParser:
     def summarize_matching(self) -> Dict[str, object]:
         wav_ids = self.build_wav_index()
         label_ids = self.build_label_index()
-        matched_ids = sorted(set(wav_ids.keys()) & set(label_ids.keys()))
+        matched_ids = [
+            sample_id for sample_id in self.matched_ids
+            if sample_id in wav_ids and sample_id in label_ids
+        ]
+        cohort_ids = set(self.matched_ids)
+        cohort_missing_wav = sorted(cohort_ids - set(wav_ids.keys()))
+        cohort_missing_label = sorted(cohort_ids - set(label_ids.keys()))
         missing_wav = sorted(set(label_ids.keys()) - set(wav_ids.keys()))
         missing_label = sorted(set(wav_ids.keys()) - set(label_ids.keys()))
 
@@ -114,6 +126,8 @@ class LabelParser:
             "matched_ids": matched_ids,
             "missing_wav": missing_wav,
             "missing_label": missing_label,
+            "cohort_missing_wav": cohort_missing_wav,
+            "cohort_missing_label": cohort_missing_label,
         }
 
     @staticmethod
@@ -174,7 +188,7 @@ class LabelParser:
 if __name__ == "__main__":
     root = os.path.join(os.getcwd(), "..", "..")
     label_folder = os.path.join(root, "raw", "label_250520")
-    data_folder = os.path.join(root, "raw", "241205")
+    data_folder = os.path.join(root, "raw", "wav")
 
     parser = LabelParser(data_folder, label_folder)
     summary = parser.summarize_matching()
@@ -183,24 +197,22 @@ if __name__ == "__main__":
     print(f"wav files: {summary['num_wav']}")
     print(f"label files: {summary['num_label']}")
     print(f"matched: {summary['num_matched']}")
-    print(f"label exists but wav missing: {len(summary['missing_wav'])}")
-    print(f"wav exists but label missing: {len(summary['missing_label'])}")
     print()
 
-    for sample_id, (wav_path, label_path) in matched.items():
-        sample_rate, num_samples = parser.get_wav_info(wav_path)
-        label_arr = parser.make_label_array(label_path, sample_rate, num_samples)
-        values, counts = np.unique(label_arr, return_counts=True)
-        label_counts = {
-            int(value): int(count)
-            for value, count in zip(values, counts)
-        }
-
-        print(f"[{sample_id}]")
-        print(f"  wav: {wav_path.name}")
-        print(f"  label: {label_path.name}")
-        print(f"  sample_rate: {sample_rate}")
-        print(f"  duration_sec: {num_samples / sample_rate:.3f}")
-        print(f"  data.shape: {tuple([num_samples])}")
-        print(f"  label.shape: {label_arr.shape}")
-        print(f"  label_counts: {label_counts}")
+    # for sample_id, (wav_path, label_path) in matched.items():
+    #     sample_rate, num_samples = parser.get_wav_info(wav_path)
+    #     label_arr = parser.make_label_array(label_path, sample_rate, num_samples)
+    #     values, counts = np.unique(label_arr, return_counts=True)
+    #     label_counts = {
+    #         int(value): int(count)
+    #         for value, count in zip(values, counts)
+    #     }
+    #
+    #     print(f"[{sample_id}]")
+    #     print(f"  wav: {wav_path.name}")
+    #     print(f"  label: {label_path.name}")
+    #     print(f"  sample_rate: {sample_rate}")
+    #     print(f"  duration_sec: {num_samples / sample_rate:.3f}")
+    #     print(f"  data.shape: {tuple([num_samples])}")
+    #     print(f"  label.shape: {label_arr.shape}")
+    #     print(f"  label_counts: {label_counts}")
