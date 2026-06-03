@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import Dataset
 
 from parser import LabelParser
+from transform import TransformKind, WindowTransform
 
 
 def preprocessing(signal: np.ndarray, sr: int, target_sr: int) -> Tuple[np.ndarray, int]:
@@ -67,6 +68,7 @@ class SlidingWindowDataset(Dataset):
         start_col: str = "cycle_start_time",
         end_col: str = "cycle_end_time",
         label_col: str = "labels",
+        input_type: TransformKind | WindowTransform = "signal",
     ):
         super().__init__()
         self.wav_base_path = wav_base_path
@@ -81,6 +83,11 @@ class SlidingWindowDataset(Dataset):
         self.start_col = start_col
         self.end_col = end_col
         self.label_col = label_col
+        self.input_transform = (
+            WindowTransform(kind=input_type, sample_rate=target_sr)
+            if isinstance(input_type, str)
+            else input_type
+        )
         self.parser = LabelParser(
             wav_base_path,
             label_base_path,
@@ -165,7 +172,7 @@ class SlidingWindowDataset(Dataset):
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         signal = torch.tensor(self.data_arr[idx], dtype=torch.float32)
         mask = torch.tensor(self.mask_arr[idx], dtype=torch.long)
-        return signal, mask
+        return self.input_transform(signal, mask)
 
 
 
@@ -187,6 +194,7 @@ class LungSoundDataset(SlidingWindowDataset):
         target_sr: int = 16000,
         window_sec: float = 8.0,
         step_sec: float = 4.0,
+        input_type: TransformKind | WindowTransform = "signal",
     ):
         super().__init__(
             wav_base_path,
@@ -197,6 +205,7 @@ class LungSoundDataset(SlidingWindowDataset):
             target_sr=target_sr,
             window_sec=window_sec,
             step_sec=step_sec,
+            input_type=input_type,
             sheet_name=1,
             start_col="cycle_start_time",
             end_col="cycle_end_time",
@@ -207,7 +216,7 @@ class LungSoundDataset(SlidingWindowDataset):
 if __name__ == "__main__":
     root = os.path.join(os.getcwd(), "..", "..")
     label_folder = os.path.join(root, "raw", "label_250520")
-    data_folder = os.path.join(root, "raw", "241205")
+    data_folder = os.path.join(root, "raw", "wav")
 
     train_dataset = LungSoundDataset(
         data_folder,
@@ -218,21 +227,22 @@ if __name__ == "__main__":
         target_sr=16000,
         window_sec=8.0,
         step_sec=4.0,
+        input_type="signal",
     )
 
-    print(f"train windows: {len(train_dataset)}")
+    print(f"windows: {len(train_dataset)}")
     print(f"train data shape: {train_dataset.data_arr.shape}")
     print(f"train mask shape: {train_dataset.mask_arr.shape}")
 
     if len(train_dataset) > 0:
-        signal, mask = train_dataset[0]
+        input_tensor, mask = train_dataset[0]
         values, counts = torch.unique(mask, return_counts=True)
         label_counts = {
             int(value): int(count)
             for value, count in zip(values, counts)
         }
 
-        print("\nfirst train sample")
-        print(f"signal.shape: {tuple(signal.shape)}")
+        print("\nsample")
+        print(f"input.shape: {tuple(input_tensor.shape)}")
         print(f"mask.shape: {tuple(mask.shape)}")
         print(f"mask label counts: {label_counts}")
