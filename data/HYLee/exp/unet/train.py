@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 
 import sys
 from pathlib import Path
@@ -29,7 +29,7 @@ sys.path.insert(0, str(DATA_DIR))
 from data.hylee.data.utils import label_folder, data_folder
 from data.hylee.data.data_loader import LungSoundDataset
 from data.hylee.utils import metric
-from data.hylee.utils.loss import FocalLoss
+from data.hylee.utils.loss import FocalLoss, CEDiceLoss, FocalDiceLoss
 from data.hylee.utils.utils import save_best_model
 from model import UNet1D
 
@@ -55,9 +55,9 @@ def get_args():
     parser.add_argument("--model_name", type=str, default="unet1d_signal")
 
     parser.add_argument("--epochs", default=30, type=int)
-    parser.add_argument("--lr", default=1e-3, type=float)
-    parser.add_argument("--batch_size", default=1024, type=int)
-    parser.add_argument("--weight_decay", default=1e-2, type=float)
+    parser.add_argument("--lr", default=3e-4, type=float)
+    parser.add_argument("--batch_size", default=256, type=int)
+    parser.add_argument("--weight_decay", default=1e-4, type=float)
     parser.add_argument("--grad_clip", default=1.0, type=float)
     parser.add_argument("--gamma", default=2.0, type=float)
 
@@ -86,7 +86,7 @@ class Trainer(object):
         # os.makedirs(self.save_path, exist_ok=True)
 
         # Data Loader
-        (self.train_loader, self.eval_loader), (self.channel_num, self.class_num) = self._build_dataloaders()
+        (self.train_loader, self.eval_loader), (self.channel_num, self.class_num) = self._build_dataloaders(use_train_sampler=True)
 
         # Model
         self.model_cfg = {
@@ -107,11 +107,7 @@ class Trainer(object):
 
         self.optimizer = optim.AdamW(self.model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=args.epochs)
-        self.criterion = FocalLoss(
-            gamma=args.gamma,
-            alpha=[1.0] * self.class_num,
-            ignore_index=args.ignore_index,
-        )
+        self.criterion = CEDiceLoss(weight=0.2, num_classes=args.num_classes, ignore_index=args.ignore_index)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.device.type == "cuda")
 
     def _make_input(self, data: torch.Tensor) -> torch.Tensor:
@@ -195,7 +191,7 @@ class Trainer(object):
         )
         return result
 
-    def _build_dataloaders(self) -> Tuple[Tuple[DataLoader, DataLoader], Tuple[int, int]]:
+    def _build_dataloaders(self, use_train_sampler=True) -> Tuple[Tuple[DataLoader, DataLoader], Tuple[int, int]]:
         train_dataset = LungSoundDataset(
             self.args.wav_base_path,
             self.args.label_base_path,
@@ -207,6 +203,7 @@ class Trainer(object):
             step_sec=self.args.step_sec,
             input_type="signal",
         )
+
         eval_dataset = LungSoundDataset(
             self.args.wav_base_path,
             self.args.label_base_path,
@@ -219,13 +216,25 @@ class Trainer(object):
             input_type="signal",
         )
 
+        train_sampler = None
+        if use_train_sampler:
+            train_sampler = self._build_rare_ratio_sampler(
+                train_dataset,
+                normal_class=0,
+                ignore_index=self.args.ignore_index,
+                scale=10.0,
+                max_weight=5.0,
+            )
+
         train_loader = DataLoader(
             dataset=train_dataset,
             batch_size=self.args.batch_size,
-            shuffle=True,
+            shuffle=train_sampler is None,
+            sampler=train_sampler,
             num_workers=self.args.num_workers,
             pin_memory=self.device.type == "cuda",
         )
+
         eval_loader = DataLoader(
             dataset=eval_dataset,
             batch_size=self.args.batch_size,
@@ -234,7 +243,47 @@ class Trainer(object):
             num_workers=self.args.num_workers,
             pin_memory=self.device.type == "cuda",
         )
+
         return (train_loader, eval_loader), (1, self.args.num_classes)
+
+    def _build_rare_ratio_sampler(
+            self,
+            train_dataset,
+            normal_class: int = 0,
+            ignore_index: int = -1,
+            scale: float = 10.0,
+            max_weight: float = 5.0,
+    ):
+        sample_weights = []
+
+        for i in range(len(train_dataset)):
+            _, y = train_dataset[i]
+
+            if not torch.is_tensor(y):
+                y = torch.as_tensor(y)
+
+            y = y.long()
+
+            valid = y != ignore_index
+            rare = (y != normal_class) & valid
+
+            valid_count = valid.sum().item()
+            rare_count = rare.sum().item()
+
+            rare_ratio = rare_count / max(valid_count, 1)
+
+            weight = 1.0 + scale * rare_ratio
+            weight = min(weight, max_weight)
+
+            sample_weights.append(weight)
+
+        sample_weights = torch.DoubleTensor(sample_weights)
+
+        return WeightedRandomSampler(
+            weights=sample_weights,
+            num_samples=len(sample_weights),
+            replacement=True,
+        )
 
     def run(self):
         results = []
