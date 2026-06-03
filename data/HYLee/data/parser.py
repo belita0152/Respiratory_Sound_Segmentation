@@ -66,16 +66,16 @@ class LabelParser:
                 if path.parent.name == sample_id.split("_")[0]
             ]
 
-            if len(valid_paths) == 1:
-                wav_ids[sample_id] = valid_paths[0]
-                skipped_paths = [path for path in paths if path != valid_paths[0]]
-                print(f"[DUPLICATE wav] use: {valid_paths[0]}")
-                for path in skipped_paths:
-                    print(f"[DUPLICATE wav] pass: {path}")
-            else:
-                print(f"[DUPLICATE wav] pass all id: {sample_id}")
-                for path in paths:
-                    print(f"  wav: {path}")
+            # if len(valid_paths) == 1:
+            #     wav_ids[sample_id] = valid_paths[0]
+            #     skipped_paths = [path for path in paths if path != valid_paths[0]]
+            #     print(f"[DUPLICATE wav] use: {valid_paths[0]}")
+            #     for path in skipped_paths:
+            #         print(f"[DUPLICATE wav] pass: {path}")
+            # else:
+            #     print(f"[DUPLICATE wav] pass all id: {sample_id}")
+            #     for path in paths:
+            #         print(f"  wav: {path}")
 
         return wav_ids
 
@@ -186,7 +186,7 @@ class LabelParser:
 
 
 if __name__ == "__main__":
-    root = os.path.join(os.getcwd(), "..", "..")
+    root = os.path.join(os.getcwd(), "..")
     label_folder = os.path.join(root, "raw", "label_250520")
     data_folder = os.path.join(root, "raw", "wav")
 
