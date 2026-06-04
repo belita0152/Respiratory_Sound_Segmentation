@@ -16,9 +16,6 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
-import sys
-from pathlib import Path
-
 CURRENT_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = CURRENT_DIR.parents[3]  # /home/coder/workspace
 DATA_DIR = WORKSPACE_ROOT / "data" / "hylee" / "data"
@@ -61,13 +58,17 @@ def get_args():
     parser.add_argument("--grad_clip", default=1.0, type=float)
     parser.add_argument("--gamma", default=2.0, type=float)
 
-    parser.add_argument("--num_classes", default=5, type=int)
     parser.add_argument("--ignore_index", default=-1, type=int)
     parser.add_argument("--target_sr", default=16000, type=int)
     parser.add_argument("--window_sec", default=8.0, type=float)
     parser.add_argument("--step_sec", default=4.0, type=float)
     parser.add_argument("--train_ratio", default=0.8, type=float)
     parser.add_argument("--down_sampling", action=argparse.BooleanOptionalAction, default=True)
+
+    parser.add_argument("--num_classes", default=4, type=int)
+    parser.add_argument("--loss_weight", default=0.2, type=float)
+    parser.add_argument("--sampler_scale", default=5.0, type=float)
+    parser.add_argument("--sampler_weight", default=8.0, type=float)
 
     parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--seed", default=42, type=int)
@@ -86,7 +87,8 @@ class Trainer(object):
         # os.makedirs(self.save_path, exist_ok=True)
 
         # Data Loader
-        (self.train_loader, self.eval_loader), (self.channel_num, self.class_num) = self._build_dataloaders(use_train_sampler=True)
+        (self.train_loader, self.eval_loader), (self.channel_num, self.class_num) = self._build_dataloaders(
+            use_train_sampler=True)
 
         # Model
         self.model_cfg = {
@@ -107,7 +109,8 @@ class Trainer(object):
 
         self.optimizer = optim.AdamW(self.model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
         self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=args.epochs)
-        self.criterion = CEDiceLoss(weight=0.2, num_classes=args.num_classes, ignore_index=args.ignore_index)
+        self.criterion = CEDiceLoss(weight=args.loss_weight, num_classes=args.num_classes,
+                                    ignore_index=args.ignore_index)
         self.scaler = torch.cuda.amp.GradScaler(enabled=self.device.type == "cuda")
 
     def _make_input(self, data: torch.Tensor) -> torch.Tensor:
@@ -182,16 +185,35 @@ class Trainer(object):
         result["eval_loss"] = total_loss / max(total_count, 1)
 
         accuracy, iou_macro, dice_macro = result["accuracy"], result["iou_macro"], result["dice_macro"]
+        # print(
+        #     f"[Epoch]: {epoch:03d} => "
+        #     f"[Loss] : {result['eval_loss']:.4f} "
+        #     f"[Accuracy] : {accuracy * 100:.2f} "
+        #     f"[IoU Macro] : {iou_macro * 100:.2f} "
+        #     f"[Dice Macro] : {dice_macro * 100:.2f}"
+        # )
+        per_class_str = " ".join(
+            [
+                f"C{cls}:I={result['per_class_iou'][cls] * 100:.1f},"
+                f"D={result['per_class_dice'][cls] * 100:.1f},"
+                f"P={result['per_class_precision'][cls] * 100:.1f},"
+                f"R={result['per_class_recall'][cls] * 100:.1f}"
+                for cls in range(self.class_num)
+            ]
+        )
+
         print(
             f"[Epoch]: {epoch:03d} => "
             f"[Loss] : {result['eval_loss']:.4f} "
             f"[Accuracy] : {accuracy * 100:.2f} "
             f"[IoU Macro] : {iou_macro * 100:.2f} "
-            f"[Dice Macro] : {dice_macro * 100:.2f}"
+            f"[Dice Macro] : {dice_macro * 100:.2f} "
+            f"| PerClass {per_class_str}"
         )
         return result
 
     def _build_dataloaders(self, use_train_sampler=True) -> Tuple[Tuple[DataLoader, DataLoader], Tuple[int, int]]:
+        # Dataset
         train_dataset = LungSoundDataset(
             self.args.wav_base_path,
             self.args.label_base_path,
@@ -216,14 +238,30 @@ class Trainer(object):
             input_type="signal",
         )
 
+        # Class Distribution
+        train_counts, train_ratios = self._count_dataset_labels(
+            train_dataset,
+            num_classes=self.args.num_classes,
+            ignore_index=self.args.ignore_index,
+        )
+        eval_counts, eval_ratios = self._count_dataset_labels(
+            eval_dataset,
+            num_classes=self.args.num_classes,
+            ignore_index=self.args.ignore_index,
+        )
+
+        self._print_label_distribution("Train", train_counts, train_ratios)
+        self._print_label_distribution("Eval", eval_counts, eval_ratios)
+
+        # Sampler
         train_sampler = None
         if use_train_sampler:
             train_sampler = self._build_rare_ratio_sampler(
                 train_dataset,
                 normal_class=0,
                 ignore_index=self.args.ignore_index,
-                scale=10.0,
-                max_weight=5.0,
+                scale=self.args.sampler_scale,
+                max_weight=self.args.sampler_weight,
             )
 
         train_loader = DataLoader(
@@ -243,6 +281,14 @@ class Trainer(object):
             num_workers=self.args.num_workers,
             pin_memory=self.device.type == "cuda",
         )
+
+        sampled_counts, sampled_ratios = self._count_loader_labels(
+            train_loader,
+            num_classes=self.args.num_classes,
+            ignore_index=self.args.ignore_index,
+            max_batches=20,
+        )
+        self._print_label_distribution("Sampled Train Loader", sampled_counts, sampled_ratios)
 
         return (train_loader, eval_loader), (1, self.args.num_classes)
 
@@ -284,6 +330,66 @@ class Trainer(object):
             num_samples=len(sample_weights),
             replacement=True,
         )
+
+    def _count_dataset_labels(
+            self,
+            dataset,
+            num_classes: int,
+            ignore_index: int = -1,
+    ):
+        counts = torch.zeros(num_classes, dtype=torch.long)
+
+        for i in range(len(dataset)):
+            _, y = dataset[i]
+
+            if not torch.is_tensor(y):
+                y = torch.as_tensor(y)
+
+            y = y.long().reshape(-1)
+            y = y[y != ignore_index]
+
+            if y.numel() == 0:
+                continue
+
+            counts += torch.bincount(y, minlength=num_classes)[:num_classes]
+
+        ratios = counts.float() / counts.sum().clamp_min(1)
+
+        return counts, ratios
+
+    def _print_label_distribution(self, name: str, counts: torch.Tensor, ratios: torch.Tensor):
+        print(f"[{name} label distribution]")
+        for cls in range(len(counts)):
+            print(
+                f"  C{cls}: count={counts[cls].item()} "
+                f"ratio={ratios[cls].item() * 100:.4f}%"
+            )
+
+    def _count_loader_labels(
+            self,
+            loader,
+            num_classes: int,
+            ignore_index: int = -1,
+            max_batches: int = 20,
+    ):
+        counts = torch.zeros(num_classes, dtype=torch.long)
+
+        for batch_idx, (_, y) in enumerate(loader, start=1):
+            if not torch.is_tensor(y):
+                y = torch.as_tensor(y)
+
+            y = y.long().reshape(-1)
+            y = y[y != ignore_index]
+
+            if y.numel() > 0:
+                counts += torch.bincount(y, minlength=num_classes)[:num_classes]
+
+            if batch_idx >= max_batches:
+                break
+
+        ratios = counts.float() / counts.sum().clamp_min(1)
+
+        return counts, ratios
 
     def run(self):
         results = []
