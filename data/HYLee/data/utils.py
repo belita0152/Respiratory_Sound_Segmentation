@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 import pandas as pd
 
-ROOT = os.path.abspath(os.path.join(Path(__file__).resolve().parent, '..', '..'))
+ROOT = os.path.abspath(os.path.join(Path(__file__).resolve().parent, '..'))
 label_folder = os.path.join(ROOT, 'raw', 'label_250520')  # 744 label files
 data_folder = os.path.join(ROOT, 'raw', 'wav')  # 2191 .wav files
 save_path = os.path.join(ROOT, 'new_gt', 'raw')  # recent: raw segments
@@ -11,7 +11,7 @@ save_path = os.path.join(ROOT, 'new_gt', 'raw')  # recent: raw segments
 # 1. Exclude manually listed None-only or Unknown-only label files.
 # 2. Exclude samples collected on or before 2024-08-27.
 # 3. Exclude samples marked Yes in HFNC, T-can, or Home vent.
-screening_file = os.path.join(os.getcwd(), '..', 'test', '전자청진음_기기착용_2024.9-2026.4.txt')
+screening_file = os.path.join(ROOT, 'data', '전자청진음_기기착용_2024.9-2026.4.txt')
 screening_columns = ["HFNC", "T-can", "Home vent"]
 performed_at_column = "\uac80\uc0ac\uc2dc\ud589\uc77c"
 cutoff_date = pd.Timestamp("2024-08-27")
