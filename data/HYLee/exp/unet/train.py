@@ -16,6 +16,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, WeightedRandomSampler
 
+import sys
+from pathlib import Path
+
 CURRENT_DIR = Path(__file__).resolve().parent
 WORKSPACE_ROOT = CURRENT_DIR.parents[3]  # /home/coder/workspace
 DATA_DIR = WORKSPACE_ROOT / "data" / "hylee" / "data"
@@ -65,10 +68,11 @@ def get_args():
     parser.add_argument("--train_ratio", default=0.8, type=float)
     parser.add_argument("--down_sampling", action=argparse.BooleanOptionalAction, default=True)
 
-    parser.add_argument("--num_classes", default=4, type=int)
+    parser.add_argument("--num_classes", default=3, type=int)
     parser.add_argument("--loss_weight", default=0.2, type=float)
     parser.add_argument("--sampler_scale", default=5.0, type=float)
     parser.add_argument("--sampler_weight", default=8.0, type=float)
+    parser.add_argument("--input_type", default='signal', type=str)  # signal, wavelet, mel
 
     parser.add_argument("--device", default="cuda", type=str)
     parser.add_argument("--seed", default=42, type=int)
@@ -223,7 +227,7 @@ class Trainer(object):
             target_sr=self.args.target_sr,
             window_sec=self.args.window_sec,
             step_sec=self.args.step_sec,
-            input_type="signal",
+            input_type=self.args.input_type,
         )
 
         eval_dataset = LungSoundDataset(
