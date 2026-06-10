@@ -9,6 +9,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+"""
+
+Vanilla UNet for 1D signal
+- Encoder: ResNet-18
+
+"""
+
 def _same_padding_1d(kernel_size: int, dilation: int = 1) -> int:
     return dilation * (kernel_size - 1) // 2
 
