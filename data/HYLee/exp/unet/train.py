@@ -68,7 +68,7 @@ def get_args():
     parser.add_argument("--train_ratio", default=0.8, type=float)
     parser.add_argument("--down_sampling", action=argparse.BooleanOptionalAction, default=True)
 
-    parser.add_argument("--num_classes", default=3, type=int)
+    parser.add_argument("--num_classes", default=5, type=int)
     parser.add_argument("--loss_weight", default=0.2, type=float)
     parser.add_argument("--sampler_scale", default=5.0, type=float)
     parser.add_argument("--sampler_weight", default=8.0, type=float)
